@@ -9,6 +9,8 @@ import {
   verifyRefreshToken,
   verifyToken,
 } from "../middleware/verifyToken";
+import axios from "axios";
+import { ObjectId, Types } from "mongoose";
 let UserRouter = express.Router();
 
 UserRouter.post(
@@ -46,6 +48,41 @@ UserRouter.post(
     }
   }
 );
+UserRouter.get("/google",async (req: Request, res: Response, next: NextFunction) => {
+  const { code } = req.query;
+  const { data } = await axios.post("https://oauth2.googleapis.com/token", null, {
+    params: {
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: "http://localhost:5000/auth/google",
+      grant_type: "authorization_code",
+      code,
+    },
+  });
+  const { access_token, id_token } = data;
+  const { data: user } = await axios.get("https://www.googleapis.com/oauth2/v2/userinfo", {
+    headers: { Authorization: `Bearer ${access_token}` },
+  });
+  let foundUser = await userModel.findOne({ email: user.email });
+  if (foundUser) {
+        //login
+      let { accessToken } = await generateToken(res, foundUser._id);
+      const qs = new URLSearchParams({accessToken,state: "login"}).toString();
+      res.redirect("http://localhost:3000?"+qs)
+      return;
+  }
+  //register
+  let hashedPassword = await bcrypt.hash("randompass", 10);
+  await new userModel({
+    email: user.email,
+    isVerified: true,
+  username: user.name,
+  avatar: user.picture,
+  password: hashedPassword,
+  }).save();
+  const qs = new URLSearchParams({state: "register"}).toString();
+  res.redirect("http://localhost:3000?"+qs)
+})
 UserRouter.post(
   "/register",
   async (req: Request, res: Response, next: NextFunction) => {
@@ -128,7 +165,7 @@ UserRouter.get(
   verifyRefreshToken,
   async (req: requestUserTypes, res: Response, next: NextFunction) => {
       let {id}=req.user as UserJwtPayload
-      let { accessToken } = await generateToken(res, id);
+      let { accessToken } = await generateToken(res, id as Types.ObjectId);
       res.status(200).send({
          accessToken,
       })
